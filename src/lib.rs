@@ -34,7 +34,7 @@ pub struct JwkCache {
     // this will be set if the last response indicated it should not be cached:
     // * `Cache-Control: no-store` (explicit do-not-cache)
     // * `Cache-Control: max-age=0` (invalidate the cached value and do not store)
-    //
+    // * no `Cache-Control` header (assume we shouldn't cache the value)
     fetch_racy: AtomicBool,
 }
 
@@ -111,12 +111,35 @@ impl JwkCache {
         &self.url
     }
 
-    /// Fetch a fresh or cached copy of the JSON Web Key set from the configured URL.
+    /// Return the cached JSON Web Key set, if it's still valid,
+    /// or fetch a new one fresh from the configured URL.
     ///
     /// A `reqwest::Client` is required so as to encourage reuse instead of implicitly
     /// creating a new client every time. This saves some connection overhead when the server
     /// supports HTTP/2 (especially if you go on to make other API requests to the same server,
-    /// which is a given when implementing Sign in With Apple/Google).
+    /// which is likely when implementing Sign in With Apple/Google).
+    ///
+    /// ### Caching Behavior
+    /// `JwkCache` obeys the `CacheControl` header in the response from the given URL.
+    ///
+    /// The expiration of the returned key set is determined by `Cache-Control: max-age=<seconds>`.
+    ///
+    /// In general, a given `JwkCache` instance will avoid making more than one concurrent network
+    /// request at a time; instead, concurrent calls to this method when the cached value is stale
+    /// will wait until the first call resolves and then use its value.
+    ///
+    /// However, if the endpoint returns `Cache-Control: no-store`, this implementation will
+    /// obey that and not cache the returned response. In the assumption that the server
+    /// will return a similar response on the next call, an internal flag is set which
+    /// will cause subsequent calls to this method to immediately request a fresh key set
+    /// instead of waiting for an exclusive lock and making requests one-at-a-time.
+    ///
+    /// If the server subsequently returns something _other_ than `Cache-Control: no-store`,
+    /// this instance will automatically revert to the default behavior
+    /// of preferring the cached value.
+    ///
+    /// If the server did not return a `Cache-Control` header, the implementation
+    /// assumes `Cache-Control: no-store`. The `Expires` header is ignored.
     pub async fn fetch(&self, client: &reqwest::Client) -> reqwest::Result<Arc<JwkSet>> {
         if let Some(existing) = self.cached.read().await.get_non_stale() {
             return Ok(existing);
@@ -153,6 +176,8 @@ impl JwkCache {
         let upgradeable_read = self.cached.upgradable_read().await;
 
         // check again because another thread might have refreshed while we waited for the lock
+        // though this will be serialized with other tasks that also called `.upgradeable_read()`,
+        // this should return quickly and new calls should immediately return the cached value
         if let Some(existing) = upgradeable_read.get_non_stale() {
             return Ok(existing);
         }
@@ -243,5 +268,13 @@ impl CachedJwkSetHolder {
     /// Get the currently cached value if present and valid. If stale or missing, return `None`.
     fn get_non_stale(&self) -> Option<Arc<JwkSet>> {
         self.0.as_ref().filter(|existing| !existing.is_stale()).cloned()
+    }
+}
+
+impl jwt::algorithm::store::Store for JwkSet {
+    type Algorithm = PKeyWithDigest<Public>;
+
+    fn get(&self, key_id: &str) -> Option<&Self::Algorithm> {
+        self.keys.get(key_id)
     }
 }
