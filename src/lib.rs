@@ -10,7 +10,7 @@ use jwt::PKeyWithDigest;
 use openssl::pkey::Public;
 use reqwest::header::CACHE_CONTROL;
 
-use crate::key::Key;
+pub use crate::key::Key;
 
 mod key;
 

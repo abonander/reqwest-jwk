@@ -8,7 +8,9 @@ use openssl::rsa::Rsa;
 use openssl::ec::{EcKey, EcGroup};
 use openssl::nid::Nid;
 
+/// The JSON Web Key structure itself.
 #[derive(serde::Deserialize)]
+#[non_exhaustive]
 pub struct Key {
     #[serde(rename = "kid")]
     pub key_id: Option<String>,
@@ -19,6 +21,7 @@ pub struct Key {
 
 #[derive(serde::Deserialize)]
 #[serde(tag = "kty", rename_all = "UPPERCASE")]
+#[non_exhaustive]
 pub enum KeyType {
     Rsa {
         alg: RsaAlg,
@@ -39,6 +42,7 @@ pub enum KeyType {
 }
 
 #[derive(serde::Deserialize)]
+#[non_exhaustive]
 pub enum RsaAlg {
     RS256,
     RS384,
@@ -46,12 +50,14 @@ pub enum RsaAlg {
 }
 
 #[derive(serde::Deserialize)]
+#[non_exhaustive]
 pub enum EcCurve {
     #[serde(rename = "P-256")]
     P256,
 }
 
 #[derive(serde::Deserialize)]
+#[non_exhaustive]
 pub enum EcAlg {
     ES256,
     ES384,
@@ -59,6 +65,7 @@ pub enum EcAlg {
 }
 
 impl Key {
+    /// Convert this `Key` into a type suitable for consumption by the `jwt` crate.
     pub fn into_jwt_key(self) -> Result<PKeyWithDigest<Public>, openssl::error::ErrorStack> {
         Ok(match self.key_type {
             KeyType::Rsa { alg, n, e} => {
